@@ -201,7 +201,7 @@ To collect the data I attached a logic probe to the controller and captured a pr
 
 # Discord
 
-There's a skywalker specific discord (not mine) that seems to have a small but growing and enthusiastic group. I'm on there. Come share your experiences with this roaster. [Skywalker Roaster Community](https://discord.com/invite/DtcfzX2Q)
+There's a skywalker specific discord (not mine) that seems to have a small but growing and enthusiastic group. I'm on there. Come share your experiences with this roaster. [Skywalker Roaster Community](https://discord.gg/m4TtNRb4uc)
 
 # Bug Fixes and Improvements
 
