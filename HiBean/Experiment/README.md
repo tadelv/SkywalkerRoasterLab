@@ -47,3 +47,11 @@ The **QuickPID** library is used to regulate heating power based on the measured
   ```
 
 This document serves as a quick reference for controlling the roaster over BLE using the HiBean ESP32 BLE Roaster Control firmware.
+
+TODO
+- BLE on Core1
+- PID storage via Preference
+- sTune Autotune Function
+- RTD Max31865 Implementation
+- TC Max31855 Implementation
+- AutoDrop Servo
