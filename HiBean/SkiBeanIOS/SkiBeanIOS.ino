@@ -476,6 +476,7 @@ void executeCommand(String command, uint8_t value) {
 const unsigned long LED_FLASH_DELAY_MS = 1000;
 const unsigned int LED_BLUE[3] = { 0, 0, 10 };
 const unsigned int LED_RED[3] = { 0, 10, 0 };
+const unsigned int LED_GREEN[3] = { 10, 0, 0 };
 const unsigned int LED_BLACK[3] = { 0, 0, 0 };
 
 char* currentLEDColor = "blue";
@@ -503,6 +504,7 @@ void handleLED() {
 }
 
 void setup() {
+    rgbLedWrite(LED_PIN, LED_GREEN[0], LED_GREEN[1], LED_GREEN[2]);
     Serial.begin(115200);
     Serial.println("Starting HiBean ESP32 BLE Roaster Control.");
     delay(3000); //let fw upload finish before we take over hwcdc serial tx/rx
