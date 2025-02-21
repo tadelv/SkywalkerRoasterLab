@@ -68,3 +68,5 @@ avr-toolchain-*.zip
 manifest.mf
 nbbuild.xml
 nbproject
+HiBean/IOS/SkiBeanIOS/.vscode/.cortex-debug.peripherals.state.json
+HiBean/IOS/SkiBeanIOS/.vscode/.cortex-debug.registers.state.json

@@ -21,6 +21,11 @@
 #include <BLEServer.h>
 #include <BLE2902.h>
 
+// -----------------------------------------------------------------------------
+// Uncomment for serial SERIAL_DEBUG; serial.print not compatible with roaster rx/tx
+// on same pins as USB serial
+// -----------------------------------------------------------------------------
+//#define SERIAL_DEBUG
 
 // -----------------------------------------------------------------------------
 // BLE UUIDs for Nordic UART Service
@@ -28,7 +33,6 @@
 #define SERVICE_UUID           "6e400001-b5a3-f393-e0a9-e50e24dcca9e" // NUS service
 #define CHARACTERISTIC_UUID_RX "6e400002-b5a3-f393-e0a9-e50e24dcca9e" // Write
 #define CHARACTERISTIC_UUID_TX "6e400003-b5a3-f393-e0a9-e50e24dcca9e" // Notify
-
 
 // -----------------------------------------------------------------------------
 // BLE Globals
@@ -40,8 +44,14 @@ bool deviceConnected = false;
 // -----------------------------------------------------------------------------
 // Pin Definitions
 // -----------------------------------------------------------------------------
-const int TX_PIN = 19;  // Output pin to roaster
-const int RX_PIN = 20;  // Input pin from roaster
+#ifndef SERIAL_DEBUG
+  const int TX_PIN = 19;  // Output pin to roaster
+  const int RX_PIN = 20;  // Input pin from roaster
+#else
+  const int TX_PIN = 1;  // bogus pin
+  const int RX_PIN = 2;  // bogus pin
+#endif
+
 const int LED_PIN = 21; // WaveShare S3 on-board LED
 
 // -----------------------------------------------------------------------------
@@ -61,9 +71,13 @@ const int ROASTER_LENGTH    = 7;   // 7 bytes received from roaster
 const int CONTROLLER_LENGTH = 6;   // 6 bytes sent to roaster
 
 // -----------------------------------------------------------------------------
-// Buffers
+// Allocate buffers
 // -----------------------------------------------------------------------------
-// Buffers
+uint8_t receiveBuffer[ROASTER_LENGTH];
+uint8_t sendBuffer[CONTROLLER_LENGTH];
+
+// Raw temperature values
+uint16_t rawTempX, rawTempY;
 
 // -----------------------------------------------------------------------------
 // Control Byte Indices
@@ -76,12 +90,6 @@ enum ControlBytes {
     HEAT_BYTE = 4,
     CHECK_BYTE = 5
 };
-
-uint8_t receiveBuffer[ROASTER_LENGTH];
-uint8_t sendBuffer[CONTROLLER_LENGTH];
-
-// Raw temperature values
-uint16_t rawTempX, rawTempY;
 
 // Control Bytes & Checksum
 void setControlChecksum() {
@@ -96,7 +104,6 @@ void setValue(uint8_t* bytePtr, uint8_t value) {
     *bytePtr = value;
     setControlChecksum();
 }
-
 
 // -----------------------------------------------------------------------------
 // Temperature Variables & Filter
@@ -136,11 +143,15 @@ void getRoasterMessage();
 class MyServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) override {
     deviceConnected = true;
-    Serial.println("BLE: Client connected.");
+    #ifdef SERIAL_DEBUG
+      Serial.println("BLE: Client connected.");
+    #endif
   }
   void onDisconnect(BLEServer* pServer) override {
     deviceConnected = false;
-    Serial.println("BLE: Client disconnected. Restarting advertising...");
+    #ifdef SERIAL_DEBUG
+      Serial.println("BLE: Client disconnected. Restarting advertising...");
+    #endif
     pServer->getAdvertising()->start();
   }
 };
@@ -154,8 +165,10 @@ class MyCallbacks : public BLECharacteristicCallbacks {
 
     if (rxValue.length() > 0) {
       String input = String(rxValue.c_str());
-      Serial.print("BLE Write Received: ");
-      Serial.println(input);
+      #ifdef SERIAL_DEBUG
+        Serial.print("BLE Write Received: ");
+        Serial.println(input);
+      #endif
       parseAndExecuteCommands(input);
     }
   }
@@ -171,18 +184,24 @@ bool itsbeentoolong() {
 }
 
 void notifyClient(const String& message) {
-    Serial.println("Attempting to notify BLE client with: " + message);
+    #ifdef SERIAL_DEBUG
+      Serial.println("Attempting to notify BLE client with: " + message);
+    #endif
+
     if (deviceConnected && pTxCharacteristic) {
         pTxCharacteristic->setValue(message.c_str());
         pTxCharacteristic->notify();
-        Serial.println("Notification sent successfully.");
+        #ifdef SERIAL_DEBUG
+          Serial.println("Notification sent successfully.");
+        #endif
     } else {
+      #ifdef SERIAL_DEBUG
         Serial.println("Notification failed. Device not connected or TX characteristic unavailable.");
+      #endif
     }
 }
 
 void shutdown() {
-    Serial.println("Shutting down...");
     for (int i = 0; i < CONTROLLER_LENGTH; i++) {
         sendBuffer[i] = 0;
     }
@@ -219,7 +238,6 @@ void pulsePin(int pin, int duration) {
 // Interrupt to watch for start of roaster message
 // https://forum.arduino.cc/t/detecting-pulses-of-certain-lengths-using-interrupts/360570/12 
 // -----------------------------------------------------------------------------
-
 unsigned long lastPulse;
 volatile bool roasterStartFound = 0;
 
@@ -242,7 +260,9 @@ void getRoasterMessage() {
       // Valid checksum, compute temperature with filtering
       filtTemp(calculateTemp());
     } else {
-      Serial.println("Not valid roaster message.");
+      #ifdef SERIAL_DEBUG
+        Serial.println("Not valid roaster message.");
+      #endif
     }
 }
 
@@ -299,16 +319,20 @@ double calculateTemp() {
 
 
 void filtTemp(double v) {
-    if (fabs(temp - v) > 10.0) {
+    if (fabs(temp - v) < 10.0) {
+        // reasonable change in temperature, use it
         temp = v;
     } else {
-        temp = (v * (100.0 - filtWeight) + temp * filtWeight) / 100.0;
+        // average it out
+      temp = ( (v * (100.0 - filtWeight)) + (temp * filtWeight) ) / 100.0;
     }
 }
 
 void handleCHAN() {
     String message = "# Active channels set to 2100\r\n";
-    Serial.println(message);
+    #ifdef SERIAL_DEBUG
+      Serial.println(message);
+    #endif
     notifyClient(message);
 }
 
@@ -317,8 +341,11 @@ void handleREAD() {
                     String(sendBuffer[HEAT_BYTE]) + "," +
                     String(sendBuffer[VENT_BYTE]) + "\r\n";
 
-    Serial.print("READ Output: ");
-    Serial.println(output);
+    #ifdef SERIAL_DEBUG
+      Serial.print("READ Output: ");
+      Serial.println(output);
+    #endif
+
     notifyClient(output);
     lastEventTime = micros();
 }
@@ -362,7 +389,10 @@ void handleCOOL(uint8_t value) {
 
 void parseAndExecuteCommands(String input) {
     input.trim();
-    Serial.println("Parsing command: " + input);
+ 
+    #ifdef SERIAL_DEBUG
+      Serial.println("Parsing command: " + input);
+    #endif
 
     while (input.length() > 0) {
         int split = input.indexOf(';');
@@ -388,8 +418,10 @@ void parseAndExecuteCommands(String input) {
         if (command.indexOf("READ") != -1) {
             command = CMD_READ;
         }
-
+      #ifdef SERIAL_DEBUG
         Serial.println("Parsed command: " + command + ", Value: " + String(value));
+      #endif
+
         executeCommand(command, value);
     }
 }
@@ -421,7 +453,11 @@ void executeCommand(String command, uint8_t value) {
             filtWeight = w;
         }
         String message = "# Physical channel 1 filter set to " + String(filtWeight);
-        Serial.println(message);
+        
+        #ifdef SERIAL_DEBUG
+          Serial.println(message);
+        #endif
+
         notifyClient(message);
     }
 }
@@ -462,8 +498,13 @@ void handleLED() {
 
 void setup() {
     Serial.begin(115200);
-    Serial.println("Starting HiBean ESP32 BLE Roaster Control...");
+    Serial.println("Starting HiBean ESP32 BLE Roaster Control.");
+    delay(3000); //let fw upload finish before we take over hwcdc serial tx/rx
 
+    #ifdef SERIAL_DEBUG
+      Serial.println("Serial SERIAL_DEBUG ON!");
+    #endif
+    
     pinMode(TX_PIN, OUTPUT);
     digitalWrite(TX_PIN, HIGH);
     pinMode(RX_PIN, INPUT);
@@ -493,7 +534,10 @@ void setup() {
 
     BLEAdvertising* pAdvertising = pServer->getAdvertising();
     pAdvertising->start();
-    Serial.println("BLE Advertising started...");
+
+    #ifdef SERIAL_DEBUG
+      Serial.println("BLE Advertising started...");
+    #endif
 
     // interrupt that flags when roaster preamble is found
     attachInterrupt(RX_PIN, watchRoasterStart, FALLING);
@@ -511,6 +555,6 @@ void loop() {
     // send roaster commands if any
     sendMessage();
 
-    // update the led so user knows we're running happening
+    // update the led so user knows we're running
     handleLED();
 }
