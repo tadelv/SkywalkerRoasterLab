@@ -141,9 +141,15 @@ void getRoasterMessage();
 // BLE Server Callbacks
 // -----------------------------------------------------------------------------
 class MyServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer* pServer) override {
+  void onConnect(BLEServer* pServer, esp_ble_gatts_cb_param_t *param) override {
     deviceConnected = true;
-    #ifdef SERIAL_DEBUG
+
+    // Change BLE connection parameters per apple ble guidelines
+    // (for this client, min interval 15ms (/1.25), max 30ms (/1.25), 4 frames, timeout 200ms/ea)
+    // https://docs.silabs.com/bluetooth/4.0/bluetooth-miscellaneous-mobile/selecting-suitable-connection-parameters-for-apple-devices
+    pServer->updateConnParams(param->connect.remote_bda, 0x000C, 0x0018, 0x0004, 0x07D0);
+   
+   #ifdef SERIAL_DEBUG
       Serial.println("BLE: Client connected.");
     #endif
   }
