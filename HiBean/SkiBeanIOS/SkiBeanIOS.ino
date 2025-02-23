@@ -14,9 +14,8 @@
  * Sends notifications for temperature/status data.
  * Expects commands via the write characteristic.
  *
- * Library dependencies: Gaussian, LinkedList
- * https://docs.arduino.cc/libraries/gaussian/
- * https://docs.arduino.cc/libraries/linkedlist/
+ * Library credit: MedianFilter
+ * https://github.com/luisllamasbinaburo/Arduino-MedianFilter
  ***************************************************/
 
 #include <Arduino.h>
@@ -24,15 +23,41 @@
 #include <BLEUtils.h>
 #include <BLEServer.h>
 #include <BLE2902.h>
-#include "Gaussian.h"
-#include "LinkedList.h"
-#include "GaussianAverage.h"
+#include "MedianFilterLib.h"
 
 // -----------------------------------------------------------------------------
-// Uncomment for serial SERIAL_DEBUG; serial.print not compatible with roaster rx/tx
-// on same pins as USB serial
+// Set SERIAL_DEBUG to 1 to enable serial output
+// Trying to print AND roaster rx/tx is not compatible with single UART boards (ie. s3-zero)
 // -----------------------------------------------------------------------------
-//#define SERIAL_DEBUG
+#define SERIAL_DEBUG 0 //set to 1 to turn on
+
+// -----------------------------------------------------------------------------
+// Macro redefines of Serial.print for debug on/off
+// -----------------------------------------------------------------------------
+#if SERIAL_DEBUG == 1
+#define D_print(...)    Serial.print(__VA_ARGS__)
+#define D_println(...)  Serial.println(__VA_ARGS__)
+#else
+#define D_print(...)
+#define D_println(...)
+#endif
+
+// -----------------------------------------------------------------------------
+// Pin Definitions
+// -----------------------------------------------------------------------------
+#if SERIAL_DEBUG == 1
+  const int TX_PIN = NULL;  // bogus pin
+  const int RX_PIN = NULL;  // bogus pin
+  const int LED_PIN = NULL; // bogus pin
+#elif defined(ARDUINO_WAVESHARE_ESP32_S3_ZERO)
+  const int TX_PIN = 19;  // Output pin to roaster
+  const int RX_PIN = 20;  // Input pin from roaster
+  const int LED_PIN = 21; // WaveShare S3 on-board LED
+#else
+  const int TX_PIN = 1;  // bogus pin
+  const int RX_PIN = 2;  // bogus pin
+  const int LED_PIN = 0; // bogus pin
+#endif
 
 // -----------------------------------------------------------------------------
 // BLE UUIDs for Nordic UART Service
@@ -48,18 +73,6 @@ BLEServer* pServer = nullptr;
 BLECharacteristic* pTxCharacteristic = nullptr;
 bool deviceConnected = false;
 
-// -----------------------------------------------------------------------------
-// Pin Definitions
-// -----------------------------------------------------------------------------
-#ifndef SERIAL_DEBUG
-  const int TX_PIN = 19;  // Output pin to roaster
-  const int RX_PIN = 20;  // Input pin from roaster
-#else
-  const int TX_PIN = 1;  // bogus pin
-  const int RX_PIN = 2;  // bogus pin
-#endif
-
-const int LED_PIN = 21; // WaveShare S3 on-board LED
 
 // -----------------------------------------------------------------------------
 // Timing Constants
@@ -152,19 +165,15 @@ class MyServerCallbacks : public BLEServerCallbacks {
     deviceConnected = true;
 
     // Change BLE connection parameters per apple ble guidelines
-    // (for this client, min interval 15ms (/1.25), max 30ms (/1.25), 4 frames, timeout 200ms/ea)
+    // (for this client, min interval 15ms (/1.25), max 30ms (/1.25), latency 4 frames, timeout 2s)
     // https://docs.silabs.com/bluetooth/4.0/bluetooth-miscellaneous-mobile/selecting-suitable-connection-parameters-for-apple-devices
     pServer->updateConnParams(param->connect.remote_bda, 0x000C, 0x0018, 0x0004, 0x07D0);
    
-   #ifdef SERIAL_DEBUG
-      Serial.println("BLE: Client connected.");
-    #endif
+    D_println("BLE: Client connected.");
   }
   void onDisconnect(BLEServer* pServer) override {
     deviceConnected = false;
-    #ifdef SERIAL_DEBUG
-      Serial.println("BLE: Client disconnected. Restarting advertising...");
-    #endif
+    D_println("BLE: Client disconnected. Restarting advertising...");
     pServer->getAdvertising()->start();
   }
 };
@@ -178,10 +187,8 @@ class MyCallbacks : public BLECharacteristicCallbacks {
 
     if (rxValue.length() > 0) {
       String input = String(rxValue.c_str());
-      #ifdef SERIAL_DEBUG
-        Serial.print("BLE Write Received: ");
-        Serial.println(input);
-      #endif
+      D_print("BLE Write Received: ");
+      D_println(input);
       parseAndExecuteCommands(input);
     }
   }
@@ -197,20 +204,14 @@ bool itsbeentoolong() {
 }
 
 void notifyClient(const String& message) {
-    #ifdef SERIAL_DEBUG
-      Serial.println("Attempting to notify BLE client with: " + message);
-    #endif
+    D_println("Attempting to notify BLE client with: " + message);
 
     if (deviceConnected && pTxCharacteristic) {
         pTxCharacteristic->setValue(message.c_str());
         pTxCharacteristic->notify();
-        #ifdef SERIAL_DEBUG
-          Serial.println("Notification sent successfully.");
-        #endif
+        D_println("Notification sent successfully.");
     } else {
-      #ifdef SERIAL_DEBUG
-        Serial.println("Notification failed. Device not connected or TX characteristic unavailable.");
-      #endif
+      D_println("Notification failed. Device not connected or TX characteristic unavailable.");
     }
 }
 
@@ -273,9 +274,7 @@ void getRoasterMessage() {
       // Valid checksum, compute temperature with filtering
       filtTemp(calculateTemp());
     } else {
-      #ifdef SERIAL_DEBUG
-        Serial.println("Not valid roaster message.");
-      #endif
+      D_println("Not valid roaster message.");
     }
 }
 
@@ -330,26 +329,16 @@ double calculateTemp() {
     return v;
 }
 
-const unsigned int NUM_SAMPLES = 12;
-const unsigned int PROCESS_AT = 3;
-unsigned int numSamplesAdded = 0;
-GaussianAverage tempAverage(NUM_SAMPLES);
-
-void filtTemp(double v) {
-    if(v < 0 && v >= 260) { return; } //don't process blatantly bogus values
-    tempAverage += v; //add it
-    if(numSamplesAdded++ >= PROCESS_AT) {
-        temp = tempAverage.process().mean;
-        tempAverage.setVariance(tempAverage.variance);  //increase/descrease variance as spread changes
-        numSamplesAdded = 0;
-    }
+MedianFilter<double> medianFilter(5);
+void filtTemp(double v){
+  if(v < 0 && v >= 300) { return; } //don't process blatantly bogus values
+  medianFilter.AddValue(v);
+  temp = medianFilter.GetFiltered();
 }
 
 void handleCHAN() {
     String message = "# Active channels set to 2100\r\n";
-    #ifdef SERIAL_DEBUG
-      Serial.println(message);
-    #endif
+    D_println(message);
     notifyClient(message);
 }
 
@@ -358,10 +347,8 @@ void handleREAD() {
                     String(sendBuffer[HEAT_BYTE]) + "," +
                     String(sendBuffer[VENT_BYTE]) + "\r\n";
 
-    #ifdef SERIAL_DEBUG
-      Serial.print("READ Output: ");
-      Serial.println(output);
-    #endif
+    D_print("READ Output: ");
+    D_println(output);
 
     notifyClient(output);
     lastEventTime = micros();
@@ -407,9 +394,7 @@ void handleCOOL(uint8_t value) {
 void parseAndExecuteCommands(String input) {
     input.trim();
  
-    #ifdef SERIAL_DEBUG
-      Serial.println("Parsing command: " + input);
-    #endif
+    D_println("Parsing command: " + input);
 
     while (input.length() > 0) {
         int split = input.indexOf(';');
@@ -435,9 +420,7 @@ void parseAndExecuteCommands(String input) {
         if (command.indexOf("READ") != -1) {
             command = CMD_READ;
         }
-      #ifdef SERIAL_DEBUG
-        Serial.println("Parsed command: " + command + ", Value: " + String(value));
-      #endif
+        D_println("Parsed command: " + command + ", Value: " + String(value));
 
         executeCommand(command, value);
     }
@@ -471,9 +454,7 @@ void executeCommand(String command, uint8_t value) {
         }
         String message = "# Physical channel 1 filter set to " + String(filtWeight);
         
-        #ifdef SERIAL_DEBUG
-          Serial.println(message);
-        #endif
+          D_println(message);
 
         notifyClient(message);
     }
@@ -520,13 +501,13 @@ void setup() {
     Serial.println("Starting HiBean ESP32 BLE Roaster Control.");
     delay(3000); //let fw upload finish before we take over hwcdc serial tx/rx
 
-    #ifdef SERIAL_DEBUG
-      Serial.println("Serial SERIAL_DEBUG ON!");
-    #endif
+    D_println("Serial SERIAL_DEBUG ON!");
     
+    #if SERIAL_DEBUG == 0
     pinMode(TX_PIN, OUTPUT);
     digitalWrite(TX_PIN, HIGH);
     pinMode(RX_PIN, INPUT);
+    #endif
 
     BLEDevice::init("ESP32_Skycommand_BLE");
     BLEDevice::setMTU(185);
@@ -554,9 +535,7 @@ void setup() {
     BLEAdvertising* pAdvertising = pServer->getAdvertising();
     pAdvertising->start();
 
-    #ifdef SERIAL_DEBUG
-      Serial.println("BLE Advertising started...");
-    #endif
+    D_println("BLE Advertising started...");
 
     // interrupt that flags when roaster preamble is found
     attachInterrupt(RX_PIN, watchRoasterStart, FALLING);
