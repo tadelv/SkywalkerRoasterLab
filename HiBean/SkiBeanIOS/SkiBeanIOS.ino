@@ -14,9 +14,8 @@
  * Sends notifications for temperature/status data.
  * Expects commands via the write characteristic.
  *
- * Library dependencies: Gaussian, LinkedList
- * https://docs.arduino.cc/libraries/gaussian/
- * https://docs.arduino.cc/libraries/linkedlist/
+ * Library dependencies: MedianFilter
+ * https://github.com/luisllamasbinaburo/Arduino-MedianFilter
  ***************************************************/
 
 #include <Arduino.h>
@@ -24,9 +23,7 @@
 #include <BLEUtils.h>
 #include <BLEServer.h>
 #include <BLE2902.h>
-#include "Gaussian.h"
-#include "LinkedList.h"
-#include "GaussianAverage.h"
+#include "MedianFilterLib.h"
 
 // -----------------------------------------------------------------------------
 // Uncomment for serial SERIAL_DEBUG; serial.print not compatible with roaster rx/tx
@@ -152,7 +149,7 @@ class MyServerCallbacks : public BLEServerCallbacks {
     deviceConnected = true;
 
     // Change BLE connection parameters per apple ble guidelines
-    // (for this client, min interval 15ms (/1.25), max 30ms (/1.25), 4 frames, timeout 200ms/ea)
+    // (for this client, min interval 15ms (/1.25), max 30ms (/1.25), latency 4 frames, timeout 2s)
     // https://docs.silabs.com/bluetooth/4.0/bluetooth-miscellaneous-mobile/selecting-suitable-connection-parameters-for-apple-devices
     pServer->updateConnParams(param->connect.remote_bda, 0x000C, 0x0018, 0x0004, 0x07D0);
    
@@ -330,19 +327,11 @@ double calculateTemp() {
     return v;
 }
 
-const unsigned int NUM_SAMPLES = 12;
-const unsigned int PROCESS_AT = 3;
-unsigned int numSamplesAdded = 0;
-GaussianAverage tempAverage(NUM_SAMPLES);
-
-void filtTemp(double v) {
-    if(v < 0 && v >= 260) { return; } //don't process blatantly bogus values
-    tempAverage += v; //add it
-    if(numSamplesAdded++ >= PROCESS_AT) {
-        temp = tempAverage.process().mean;
-        tempAverage.setVariance(tempAverage.variance);  //increase/descrease variance as spread changes
-        numSamplesAdded = 0;
-    }
+MedianFilter<double> medianFilter(5);
+void filtTemp(double v){
+  if(v < 0 && v >= 300) { return; } //don't process blatantly bogus values
+  medianFilter.AddValue(v);
+  temp = medianFilter.GetFiltered();
 }
 
 void handleCHAN() {
