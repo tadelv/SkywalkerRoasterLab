@@ -13,6 +13,10 @@
  *
  * Sends notifications for temperature/status data.
  * Expects commands via the write characteristic.
+ *
+ * Library dependencies: Gaussian, LinkedList
+ * https://docs.arduino.cc/libraries/gaussian/
+ * https://docs.arduino.cc/libraries/linkedlist/
  ***************************************************/
 
 #include <Arduino.h>
@@ -20,6 +24,9 @@
 #include <BLEUtils.h>
 #include <BLEServer.h>
 #include <BLE2902.h>
+#include "Gaussian.h"
+#include "LinkedList.h"
+#include "GaussianAverage.h"
 
 // -----------------------------------------------------------------------------
 // Uncomment for serial SERIAL_DEBUG; serial.print not compatible with roaster rx/tx
@@ -323,14 +330,18 @@ double calculateTemp() {
     return v;
 }
 
+const unsigned int NUM_SAMPLES = 12;
+const unsigned int PROCESS_AT = 3;
+unsigned int numSamplesAdded = 0;
+GaussianAverage tempAverage(NUM_SAMPLES);
 
 void filtTemp(double v) {
-    if (fabs(temp - v) < 10.0) {
-        // reasonable change in temperature, use it
-        temp = v;
-    } else {
-        // average it out
-      temp = ( (v * (100.0 - filtWeight)) + (temp * filtWeight) ) / 100.0;
+    if(v < 0 && v >= 260) { return; } //don't process blatantly bogus values
+    tempAverage += v; //add it
+    if(numSamplesAdded++ >= PROCESS_AT) {
+        temp = tempAverage.process().mean;
+        tempAverage.setVariance(tempAverage.variance);  //increase/descrease variance as spread changes
+        numSamplesAdded = 0;
     }
 }
 
