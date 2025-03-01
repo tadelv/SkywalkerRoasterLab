@@ -364,6 +364,7 @@ void handleHEAT(uint8_t value) {
 void handleVENT(uint8_t value) {
     if (value <= 100) {
         setValue(&sendBuffer[VENT_BYTE], value);
+        handleFILTER(value);
     }
     lastEventTime = micros();
 }
@@ -378,8 +379,10 @@ void handleDRUM(uint8_t value) {
 }
 
 void handleFILTER(uint8_t value) {
-    if (value <= 100) {
-        setValue(&sendBuffer[FILTER_BYTE], value);
+    if (value < 100) {
+      setValue(&sendBuffer[FILTER_BYTE], (int) round(value*(filtWeight/100.0)*4/100)); //scale 0-100/0-4
+    } else if (value == 100) {
+      setValue(&sendBuffer[FILTER_BYTE], (int) round(value*4/100)); //ignore filtweight if 100% value
     }
     lastEventTime = micros();
 }
@@ -387,6 +390,7 @@ void handleFILTER(uint8_t value) {
 void handleCOOL(uint8_t value) {
     if (value <= 100) {
         setValue(&sendBuffer[COOL_BYTE], value);
+        handleFILTER(value);
     }
     lastEventTime = micros();
 }
