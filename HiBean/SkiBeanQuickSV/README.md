@@ -7,18 +7,22 @@ The **QuickPID** library is used to regulate heating power based on the measured
 - **Automatic (PID ON):** Uses PID logic to adjust the heater output.
 - **Manual (PID OFF):** Allows manual control of heater power.
 
-## **Available Commands**
-| **Command**       | **Description** |
-|------------------|----------------|
+## **Available Commands (case-INsensitive)**
+| **Command**     | **Description** |
+|-----------------|----------------|
 | `PID;ON`        | Enables PID control (automatic mode). |
 | `PID;OFF`       | Disables PID control (switches to manual mode). |
 | `PID;SV;XXX`    | Sets the PID **setpoint temperature** (XXX is in °C, e.g., `PID;SV;250` sets the target to 250°C). |
+| `PID;KP;XX.X`   | Temporarily sets the proportional tuning of the PID control. |
+| `PID;KI;XX.X`   | Temporarily sets the integral tuning of the PID control. |
+| `PID;KD;XX.X`   | Temporarily sets the derivative tuning of the PID control. |
+| `PID;RST`       | Temporarily apply the updated PID tunings. |
 | `OT1;XX`        | Manually sets heater power to **XX%** (only works in MANUAL mode). |
 | `READ`          | Retrieves current temperature, set temperature, heater, and vent power. |
 
 ## **Other Control Commands**
-| **Command**       | **Description** |
-|------------------|----------------|
+| **Command**     | **Description** |
+|-----------------|----------------|
 | `OT2;XX`        | Sets the vent power to **XX%**. |
 | `OFF`           | Shuts down the system. |
 | `ESTOP`         | Emergency stop: Sets heater to 0% and vent to 100%. |
