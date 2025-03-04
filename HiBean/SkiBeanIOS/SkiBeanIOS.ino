@@ -165,9 +165,9 @@ class MyServerCallbacks : public BLEServerCallbacks {
     deviceConnected = true;
 
     // Change BLE connection parameters per apple ble guidelines
-    // (for this client, min interval 15ms (/1.25), max 30ms (/1.25), latency 4 frames, timeout 2s)
+    // (for this client, min interval 15ms (/1.25), max 30ms (/1.25), latency 4 frames, timeout 5sec(/10ms)
     // https://docs.silabs.com/bluetooth/4.0/bluetooth-miscellaneous-mobile/selecting-suitable-connection-parameters-for-apple-devices
-    pServer->updateConnParams(param->connect.remote_bda, 0x000C, 0x0018, 0x0004, 0x07D0);
+    pServer->updateConnParams(param->connect.remote_bda, 12, 24, 4, 500);
    
     D_println("BLE: Client connected.");
   }
@@ -364,7 +364,11 @@ void handleHEAT(uint8_t value) {
 void handleVENT(uint8_t value) {
     if (value <= 100) {
         setValue(&sendBuffer[VENT_BYTE], value);
-        handleFILTER(value);
+        if (value == 0) {
+            handleFILTER(value); // off
+        } else {
+            handleFILTER((int) round(4-((value-1)*4/100))); //convert 0-100 to inverted 4-1
+        }
     }
     lastEventTime = micros();
 }
@@ -379,10 +383,8 @@ void handleDRUM(uint8_t value) {
 }
 
 void handleFILTER(uint8_t value) {
-    if (value < 100) {
-      setValue(&sendBuffer[FILTER_BYTE], (int) round(value*(filtWeight/100.0)*4/100)); //scale 0-100/0-4
-    } else if (value == 100) {
-      setValue(&sendBuffer[FILTER_BYTE], (int) round(value*4/100)); //ignore filtweight if 100% value
+    if (value >= 0 && value <= 4 ) {
+        setValue(&sendBuffer[FILTER_BYTE], value); //0 off; 1 fastest -> 4 slowest
     }
     lastEventTime = micros();
 }
