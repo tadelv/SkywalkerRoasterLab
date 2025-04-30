@@ -10,8 +10,8 @@ Combines BLE, USB and WiFi access to the Skywalker roaster in one controller.
 Use HiBean to connect to Trident. Search for "Skywalker-Trident" when adding the roaster in HiBean app.
 
 # USB setup
-Use the right usb-c port (when the board is facing you, usb ports facing down), to connect it to your computer. Use one
-of the provided `.aset` Artisan settings to connect to the roaster. Remember to select the correct port in Artisan!
+Use the left usb-c port (when the board is facing you, usb ports facing down), to connect it to your computer. Use one
+of the provided `.aset` Artisan settings in the "Artisan Config" folder, to connect to the roaster. Remember to select the correct port in Artisan!
 
 # Wifi setup
 At first start, Trident creates an access point with the SSID "Trident". Once you connect to it, you can use the
