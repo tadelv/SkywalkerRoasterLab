@@ -132,7 +132,7 @@ void webSerialLoop(void *params) {
                      String("Wifi: ") + WiFi.localIP().toString();
     displayMessage(readMsg.c_str());
     WebSerial.loop();
-    delay(500);
+    delay(250);
     ledControl();
 		serialLoop();
     webSocketLoop();

@@ -1,10 +1,10 @@
 #include "state_request_queue.h"
-#include "model.h"
 #include "dlog.h"
+#include "model.h"
 #include <Arduino.h>
 #include <cstdint>
 
-#define STATE_QUEUE_SIZE 10
+#define STATE_QUEUE_SIZE 3
 
 extern void handleDRUM(uint8_t value);
 extern void handleCOOL(uint8_t value);
@@ -18,13 +18,25 @@ static StateRequestT targetState = {0};
 
 void initStateQueue() {
   stateQueueMutex = xSemaphoreCreateMutex();
+  if (stateQueueMutex == NULL) {
+    D_println("Failed to create state queue mutex!");
+    return;
+  }
   for (int i = 0; i < STATE_QUEUE_SIZE; ++i) {
     stateQueue[i].valid = false;
   }
 }
 
 bool enqueueStateRequest(StateRequestT req, StateSourceT source) {
+  if (req.cooling == 255 && req.heater == 255 && req.drum == 255 &&
+      req.fan == 255) {
+    D_println("nothing to enqueue");
+    return false;
+  }
   if (xSemaphoreTake(stateQueueMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    int lowestPriority = source;
+    int lowestIndex = -1;
+
     for (int i = 0; i < STATE_QUEUE_SIZE; ++i) {
       if (!stateQueue[i].valid) {
         stateQueue[i].request = req;
@@ -33,7 +45,22 @@ bool enqueueStateRequest(StateRequestT req, StateSourceT source) {
         xSemaphoreGive(stateQueueMutex);
         return true;
       }
+      if (stateQueue[i].source < lowestPriority) {
+        lowestPriority = stateQueue[i].source;
+        lowestIndex = i;
+      }
     }
+
+    // Replace lower-priority entry if needed
+    if (lowestIndex != -1) {
+      stateQueue[lowestIndex].request = req;
+      stateQueue[lowestIndex].source = source;
+      stateQueue[lowestIndex].valid = true;
+      D_println("Replaced lower-priority state request in queue.");
+      xSemaphoreGive(stateQueueMutex);
+      return true;
+    }
+
     xSemaphoreGive(stateQueueMutex);
   }
   return false;
@@ -54,7 +81,9 @@ void processStateQueue() {
     if (highestIndex != -1) {
       StateRequestEntryT entry = stateQueue[highestIndex];
       stateQueue[highestIndex].valid = false;
+      xSemaphoreGive(stateQueueMutex); // Release before applying
       applyStateRequest(entry.request, entry.source);
+      return;
     }
 
     xSemaphoreGive(stateQueueMutex);
