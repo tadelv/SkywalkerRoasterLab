@@ -10,11 +10,12 @@ extern void handleDRUM(uint8_t value);
 extern void handleCOOL(uint8_t value);
 extern void handleOT1(uint8_t value);
 extern void handleVENT(uint8_t value);
+void parseAndExecuteCommands(String input);
 void applyStateRequest(StateRequestT req, StateSourceT source);
 
 static StateRequestEntryT stateQueue[STATE_QUEUE_SIZE];
 static SemaphoreHandle_t stateQueueMutex;
-static StateRequestT targetState = {0};
+static StateRequestT targetState = {0, 0, 0, 0, ""};
 
 void initStateQueue() {
   stateQueueMutex = xSemaphoreCreateMutex();
@@ -29,7 +30,7 @@ void initStateQueue() {
 
 bool enqueueStateRequest(StateRequestT req, StateSourceT source) {
   if (req.cooling == 255 && req.heater == 255 && req.drum == 255 &&
-      req.fan == 255) {
+      req.fan == 255 && req.pidCommand.isEmpty()) {
     D_println("nothing to enqueue");
     return false;
   }
@@ -107,9 +108,12 @@ void applyStateRequest(StateRequestT req, StateSourceT source) {
     handleDRUM(req.drum);
     targetState.drum = req.drum;
   }
+	if (req.pidCommand.isEmpty() == false) {
+		parseAndExecuteCommands(req.pidCommand);
+	}
 
-  D_printf("Applied request from source %d: H=%d F=%d D=%d C=%d\n", source,
-           req.heater, req.fan, req.drum, req.cooling);
+  D_printf("Applied request from source %d: H=%d F=%d D=%d C=%d PID=%s\n", source,
+           req.heater, req.fan, req.drum, req.cooling, req.pidCommand.c_str());
 }
 
 StateRequestT getCurrentState() {

@@ -134,8 +134,10 @@ void webSerialLoop(void *params) {
     WebSerial.loop();
     delay(250);
     ledControl();
+#ifdef S3
 		serialLoop();
-    webSocketLoop();
+#endif
+		webSocketLoop();
     bleLoop();
   }
   vTaskDelete(NULL);
@@ -155,7 +157,7 @@ void loop() {
 
   sendRoasterMessage();
   // Ensure PID or manual heat control is handled
-  // handlePIDControl();
+  handlePIDControl();
 
   processStateQueue();
   _currentState = getCurrentState();
