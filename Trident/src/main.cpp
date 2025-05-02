@@ -73,7 +73,7 @@ void setup() {
   xTaskCreate(webSerialLoop, "WebSerialTask", configMINIMAL_STACK_SIZE + 2048,
               NULL, 1, NULL);
   displayInit();
-  initBLE("Trident", "1.0.0", "Skywalker-Trident");
+  initBLE("Trident", "1.0.1", "Skywalker-Trident");
   delay(5000);
 
   pinMode(TX_PIN, OUTPUT);
