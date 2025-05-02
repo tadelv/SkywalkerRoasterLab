@@ -1,7 +1,6 @@
 #include <ArduinoJson.h>
 
 #include "CommandLoop.h"
-#include "ArduinoJson/Document/JsonDocument.hpp"
 #include "dlog.h"
 #include "model.h"
 #include <ESPAsyncWebServer.h>
@@ -81,10 +80,10 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
     }
 
     // Send Values to Artisan over Websocket
+    JsonDocument root;
+    root["id"] = ln_id;
     const char *command = doc["command"].as<const char *>();
     if (command != NULL && strncmp(command, "getData", 7) == 0) {
-      JsonDocument root;
-      root["id"] = ln_id;
       root["data"]["ET"] = state.temp; // Med_ExhaustTemp.getMedian()
       root["data"]["BT"] = state.temp; // Med_BeanTemp.getMedian();
       root["data"]["BurnerVal"] = state.request.heater;
@@ -93,8 +92,8 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
       root["data"]["Cool"] = state.request.cooling;
     }
 
-    char buffer[200];                        // create temp buffer
-    size_t len = serializeJson(doc, buffer); // serialize to buffer
+    char buffer[200];                         // create temp buffer
+    size_t len = serializeJson(root, buffer); // serialize to buffer
     // DEBUG WEBSOCKET
 
     client->text(buffer);
