@@ -69,3 +69,10 @@ manifest.mf
 nbbuild.xml
 nbproject
 .vscode/
+
+# PIO
+.pio
+.clang_complete
+.gcc-flags.json
+.ccls
+
