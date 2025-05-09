@@ -9,13 +9,13 @@
 #include "CommandLoop.h"
 #include "SkiComms.h"
 #include "SkiCMD.h"
+#include "api.h"
 #include "ble.h"
 #include "display.h"
 #include "model.h"
 #include "pindef.h"
 #include "state_request_queue.h"
 #include "wifi_setup.h"
-#include "api.h"
 
 // -----------------------------------------------------------------------------
 // Global Bean Temperature Variable
@@ -60,7 +60,7 @@ void setup() {
   rgbLedWrite(rgbLedPin, LED_RED[0], LED_RED[1], LED_RED[2]);
 
   initStateQueue();
-	setupWifi();
+  setupWifi();
   WebSerial.begin(&server);
 
   WebSerial.onMessage([](uint8_t *data, size_t len) {
@@ -68,12 +68,12 @@ void setup() {
     parseAndExecuteCommands(input);
   });
   setupMainLoop(&server);
-	setupApi(&server);
+  setupApi(&server);
   server.begin();
   xTaskCreate(webSerialLoop, "WebSerialTask", configMINIMAL_STACK_SIZE + 2048,
               NULL, 1, NULL);
   displayInit();
-	myPID.SetOutputLimits(0, 95);
+  myPID.SetOutputLimits(0, 95);
   delay(5000);
   initBLE("Trident", "1.0.1", "Skywalker-Trident");
 
@@ -105,20 +105,19 @@ void serialLoop() {
   }
   String command = Serial.readStringUntil('\n');
   command.trim();
-	CommandTypeT type = classifyCommandType(command);
-	if (type == CMDType_READ) {
+  CommandTypeT type = classifyCommandType(command);
+  if (type == CMDType_READ) {
 
-        String readMsg = "0, " + String(temp, 1) + "," +
-                         String(temp, 1) + "," +
-                         String(_currentState.heater) + "," +
-                         String(_currentState.fan) + "\r\n";
-		Serial.println(readMsg);
-	} else if (type == CMDType_STATE_REQUEST) {
-		StateRequestT req = parseCommandToStateRequest(command);
-		enqueueStateRequest(req, SOURCE_USB);
-	} else {
-		parseAndExecuteCommands(command);
-	}
+    String readMsg = "0, " + String(temp, 1) + "," + String(temp, 1) + "," +
+                     String(_currentState.heater) + "," +
+                     String(_currentState.fan) + "\r\n";
+    Serial.println(readMsg);
+  } else if (type == CMDType_STATE_REQUEST) {
+    StateRequestT req = parseCommandToStateRequest(command);
+    enqueueStateRequest(req, SOURCE_USB);
+  } else {
+    parseAndExecuteCommands(command);
+  }
 }
 
 void webSerialLoop(void *params) {
@@ -132,9 +131,9 @@ void webSerialLoop(void *params) {
     delay(250);
     ledControl();
 #ifdef S3
-		serialLoop();
+    serialLoop();
 #endif
-		webSocketLoop();
+    webSocketLoop();
     bleLoop();
   }
   vTaskDelete(NULL);
@@ -152,11 +151,12 @@ void loop() {
     getRoasterMessage();
   }
 
-  sendRoasterMessage();
+  processStateQueue();
   // Ensure PID or manual heat control is handled
   handlePIDControl();
 
-  processStateQueue();
+  sendRoasterMessage();
+
   _currentState = getCurrentState();
 }
 
@@ -165,11 +165,11 @@ const unsigned long LED_FLASH_DELAY_MS = 2000;
 extern bool deviceConnected;
 
 void ledControl() {
-	int now = millis();
-	if (now - LED_LAST_ON_MS > LED_FLASH_DELAY_MS) {
-		isOn = !isOn;
-		LED_LAST_ON_MS = now;
-	}
+  int now = millis();
+  if (now - LED_LAST_ON_MS > LED_FLASH_DELAY_MS) {
+    isOn = !isOn;
+    LED_LAST_ON_MS = now;
+  }
   if (isOn) {
     rgbLedWrite(rgbLedPin, 0, 0, 0);
   } else {
