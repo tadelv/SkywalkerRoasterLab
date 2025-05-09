@@ -75,7 +75,7 @@ void setup() {
   displayInit();
   myPID.SetOutputLimits(0, 95);
   delay(5000);
-  initBLE("Trident", "1.0.1", "Skywalker-Trident");
+  initBLE("Trident", "1.0.2", "Skywalker-Trident");
 
   pinMode(TX_PIN, OUTPUT);
   digitalWrite(TX_PIN, HIGH);
