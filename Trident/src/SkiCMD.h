@@ -59,10 +59,10 @@ void shutdown() {
 // -----------------------------------------------------------------------------
 // Command handlers
 // -----------------------------------------------------------------------------
-void handleCHAN() {
-  String message = "# Active channels set to 2100\r\n";
-  D_println(message);
-  // notifyBLEClient(message);
+void handleCHAN(String channelMask = "2100") {
+  // TC4 protocol: echo back the channel mask that was set
+  String message = "# Active channels set to " + channelMask + "\r\n";
+  D_println(message.c_str());
 }
 
 void handleOT1(uint8_t value) {
@@ -77,8 +77,8 @@ void handleREAD() {
   String readMsg = "0," + String(temp, 1) + "," + String(temp, 1) + "," +
                    String(sendBuffer[HEAT_BYTE]) + "," +
                    String(sendBuffer[VENT_BYTE]) + "\r\n";
-  D_print("READ Output: ");
-  D_println(readMsg);
+  // D_print("READ Output: ");
+  // D_println(readMsg);
 
   // notifyBLEClient(readMsg);
   lastEventTime = micros();
@@ -259,7 +259,9 @@ void parseAndExecuteCommands(String input) {
     D_println("Setting Cool: " + param);
     handleCOOL(param.toInt()); // Cool the beans
   } else if (command == "CHAN") {
-    handleCHAN(); // Handle TC4 init message
+    // TC4 protocol: parse channel mask and echo it back
+    String channelMask = param.length() > 0 ? param : "2100";
+    handleCHAN(channelMask);
   } else if (command == "UNITS") {
     if (split1 >= 0)
       CorF = input.charAt(split1 + 1); // Set temperature units

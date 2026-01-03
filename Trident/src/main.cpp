@@ -3,7 +3,6 @@
 #include <ESPAsyncWebServer.h>
 #include <ESPmDNS.h>
 #include <PID_v1.h>
-#include <WebSerial.h>
 #include <WiFi.h>
 
 #include "CommandLoop.h"
@@ -12,10 +11,13 @@
 #include "api.h"
 #include "ble.h"
 #include "display.h"
+#include "freertos/idf_additions.h"
 #include "model.h"
 #include "pindef.h"
 #include "state_request_queue.h"
 #include "wifi_setup.h"
+#include "wifi_manager.h"
+#include <esp_wifi.h>
 
 // -----------------------------------------------------------------------------
 // Global Bean Temperature Variable
@@ -45,12 +47,27 @@ const unsigned int LED_YELLOW[3] = {0, 128, 128};
 typedef enum { booting = 0, connected, disconnected } BloodhoundStateT;
 
 AsyncWebServer server(80);
+AsyncWebSocket
+    wsConsole("/console"); // WebSocket for console (replaces WebSerial)
 const char rgbLedPin = RGB_PIN;
 // const char ledPin = 15;
 bool isOn = false;
 BloodhoundStateT m_state = booting;
 void webSerialLoop(void *params);
 void ledControl();
+
+// Function to handle incoming console WebSocket messages
+void handleConsoleMessage(AsyncWebSocketClient *client, uint8_t *data,
+                          size_t len) {
+  String input = String((char *)data, len);
+  input.trim();
+
+  // Echo the command back to the sender
+  client->text("> " + input);
+
+  // Parse and execute the command
+  parseAndExecuteCommands(input);
+}
 
 void setup() {
   Serial.begin(115200);
@@ -61,21 +78,48 @@ void setup() {
 
   initStateQueue();
   setupWifi();
-  WebSerial.begin(&server);
 
-  WebSerial.onMessage([](uint8_t *data, size_t len) {
-    String input = String(data, len);
-    parseAndExecuteCommands(input);
+  // Start WiFi monitoring for automatic reconnection
+  startWiFiMonitor();
+
+  // Setup console WebSocket (replaces WebSerial)
+  wsConsole.onEvent([](AsyncWebSocket *server, AsyncWebSocketClient *client,
+                       AwsEventType type, void *arg, uint8_t *data,
+                       size_t len) {
+    if (type == WS_EVT_CONNECT) {
+      String welcome = "Console WebSocket Connected\n";
+      welcome += "Type commands to control the system\n";
+      welcome += "Use 'help' for available commands\n";
+      welcome += "IP: " + WiFi.localIP().toString();
+      client->text(welcome);
+    } else if (type == WS_EVT_DATA) {
+      AwsFrameInfo *info = (AwsFrameInfo *)arg;
+      if (info->final && info->opcode == WS_TEXT) {
+        handleConsoleMessage(client, data, len);
+      }
+    } else if (type == WS_EVT_DISCONNECT) {
+      // Client disconnected
+    }
   });
+  server.addHandler(&wsConsole);
+
   setupMainLoop(&server);
   setupApi(&server);
   server.begin();
-  xTaskCreate(webSerialLoop, "WebSerialTask", configMINIMAL_STACK_SIZE + 2048,
-              NULL, 1, NULL);
+  // Increase stack size from 8192 to 12288 and priority from 1 to 2
+  xTaskCreate(webSerialLoop, "WebSerialTask", 12288,
+              NULL, 2, NULL);
   displayInit();
   myPID.SetOutputLimits(0, 95);
-  delay(5000);
-  initBLE("Trident", "1.0.2", "Skywalker-Trident");
+
+  // Configure WiFi/BLE coexistence for better stability
+  esp_wifi_set_ps(WIFI_PS_MIN_MODEM);  // Minimum power save for better coexistence
+  // Note: esp_coex_set_preference may not be available in all ESP32 framework versions
+  // The WiFi power save setting above provides basic coexistence support
+
+  // Let WiFi stabilize before starting BLE
+  delay(2000);
+  initBLE("Trident", "1.0.3", "Skywalker-Trident");
 
   pinMode(TX_PIN, OUTPUT);
   digitalWrite(TX_PIN, HIGH);
@@ -107,10 +151,10 @@ void serialLoop() {
   command.trim();
   CommandTypeT type = classifyCommandType(command);
   if (type == CMDType_READ) {
-
-    String readMsg = "0, " + String(temp, 1) + "," + String(temp, 1) + "," +
-                     String(_currentState.heater) + "," +
-                     String(_currentState.fan) + "\r\n";
+    // Use snprintf instead of String concatenation to prevent heap fragmentation
+    char readMsg[64];
+    snprintf(readMsg, sizeof(readMsg), "0,%.1f,%.1f,%d,%d\r\n",
+             temp, temp, _currentState.heater, _currentState.fan);
     Serial.println(readMsg);
   } else if (type == CMDType_STATE_REQUEST) {
     StateRequestT req = parseCommandToStateRequest(command);
@@ -121,20 +165,72 @@ void serialLoop() {
 }
 
 void webSerialLoop(void *params) {
+  static unsigned long lastStatusTime = 0;
+  static unsigned long lastCleanupTime = 0;
+  static unsigned long lastStackCheck = 0;
+  static unsigned long lastHeapCheck = 0;
+  const unsigned long STATUS_INTERVAL = 1000;  // Send status every 1 second
+  const unsigned long CLEANUP_INTERVAL = 5000; // Cleanup every 5 seconds
+  const unsigned long STACK_CHECK_INTERVAL = 60000; // Check stack every minute
+  const unsigned long HEAP_CHECK_INTERVAL = 5000; // Check heap every 5 seconds
+
   while (1) {
-    String readMsg = String("Status:\n") + "0," + String(temp, 1) + "," +
-                     String(temp, 1) + "," + String(sendBuffer[HEAT_BYTE]) +
-                     "," + String(sendBuffer[VENT_BYTE]) + "\n" +
-                     String("Wifi: ") + WiFi.localIP().toString();
-    displayMessage(readMsg.c_str());
-    WebSerial.loop();
-    delay(250);
+    unsigned long now = millis();
+
+#ifdef DEBUG
+    // Monitor stack usage
+    if (now - lastStackCheck > STACK_CHECK_INTERVAL) {
+      UBaseType_t stackHighWater = uxTaskGetStackHighWaterMark(NULL);
+      if (stackHighWater < 1024) {
+        D_printf("WARNING: WebSerialTask low stack: %d bytes free\n", stackHighWater);
+      }
+      lastStackCheck = now;
+    }
+#endif
+
+    // Monitor heap health
+    if (now - lastHeapCheck > HEAP_CHECK_INTERVAL) {
+      uint32_t freeHeap = ESP.getFreeHeap();
+      uint32_t minFreeHeap = ESP.getMinFreeHeap();
+
+      if (freeHeap < 80000) {  // Less than 80KB free
+        D_printf("WARNING: Heap low - Free: %d, Min: %d\n", freeHeap, minFreeHeap);
+      }
+#ifdef DEBUG
+      else {
+        // Log heap status periodically for monitoring
+        D_printf("Heap: %d free, %d min\n", freeHeap, minFreeHeap);
+      }
+#endif
+      lastHeapCheck = now;
+    }
+
+    // Send status periodically, not every loop
+    if (now - lastStatusTime > STATUS_INTERVAL) {
+      // Use snprintf instead of String concatenation to prevent heap fragmentation
+      char readMsg[128];
+      snprintf(readMsg, sizeof(readMsg), "Status:\n0,%.1f,%.1f,%d,%d\nWifi: %s",
+               temp, temp, sendBuffer[HEAT_BYTE], sendBuffer[VENT_BYTE],
+               WiFi.localIP().toString().c_str());
+      displayMessage(readMsg);
+      lastStatusTime = now;
+    }
+
+    // Clean up clients less frequently
+    if (now - lastCleanupTime > CLEANUP_INTERVAL) {
+      wsConsole.cleanupClients();
+      lastCleanupTime = now;
+    }
+
     ledControl();
 #ifdef S3
     serialLoop();
 #endif
     webSocketLoop();
     bleLoop();
+
+    delay(200);
+    taskYIELD(); // Explicitly yield to other tasks
   }
   vTaskDelete(NULL);
 }

@@ -133,9 +133,10 @@ bool calculateRoasterChecksum() {
   for (int i = 0; i < (ROASTER_LENGTH - 1); i++) {
     sum += receiveBuffer[i];
   }
-	bool valid = (sum == receiveBuffer[ROASTER_LENGTH - 1]);
-	D_printf("checksum: %d, buf: %d, match: %d\n", sum, receiveBuffer[ROASTER_LENGTH - 1], valid);
-	if (1) {
+  bool valid = (sum == receiveBuffer[ROASTER_LENGTH - 1]);
+  D_printf("checksum: %d, buf: %d, match: %d\n", sum,
+           receiveBuffer[ROASTER_LENGTH - 1], valid);
+  if (1) {
     D_printf("Buffer: ");
     for (int i = 0; i < ROASTER_LENGTH; i++) {
       D_printf("%02X ", receiveBuffer[i]);
@@ -166,21 +167,26 @@ double calculateTemp() {
 }
 
 MedianFilter<double> tempFilter(7);
-void filtTemp(double v){
-  int maxV = ((CorF == 'F') ? 500 : 260); //pick appropriate max cutoff given C or F units
-  if(v < 0 || v > maxV) { return; } //don't process blatantly bogus values
-  tempFilter.AddValue(v); //add to the collection
-  temp = tempFilter.GetFiltered(); //update global temp
+void filtTemp(double v) {
+  int maxV =
+      ((CorF == 'F') ? 500
+                     : 260); // pick appropriate max cutoff given C or F units
+  if (v < 0 || v > maxV) {
+    return;
+  }                                // don't process blatantly bogus values
+  tempFilter.AddValue(v);          // add to the collection
+  temp = tempFilter.GetFiltered(); // update global temp
   D_printf("filtered temp: %.2f\n", temp);
 }
 
 void extern getRoasterMessage() {
   getMessage(ROASTER_LENGTH, RX_PIN);
 
-  if (calculateRoasterChecksum()) {
-    // Valid checksum, compute temperature with filtering
-    filtTemp(calculateTemp());
-  } else {
+  if (!calculateRoasterChecksum()) {
     D_println("Not valid roaster message.");
+  } else {
+    // Valid checksum, compute temperature with filtering
   }
+  // Log temp anyway, might be on to something here
+  filtTemp(calculateTemp());
 }
