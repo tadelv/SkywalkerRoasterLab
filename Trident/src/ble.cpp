@@ -118,11 +118,15 @@ class MyCallbacks : public BLECharacteristicCallbacks {
         return;
       }
       if (type == CMDType_CHAN) {
-        delay(1800);
-        String message = "# Active channels set to 2100\r\n";
-        notifyBLEClient(message);
-        notifyBLEClient("");
-        // notifyBLEClient("CHAN;2100");
+        // TC4 protocol: parse channel mask from CHAN;xxxx and echo it back
+        String channelMask = "2100"; // Default
+        int splitPos = input.indexOf(';');
+        if (splitPos >= 0 && splitPos < input.length() - 1) {
+          channelMask = input.substring(splitPos + 1);
+          channelMask.trim();
+        }
+        String response = "\r# Active channels set to " + channelMask + "\r\n";
+        notifyBLEClient(response); // Only send ONCE
         return;
       }
 
@@ -139,15 +143,12 @@ class MyCallbacks : public BLECharacteristicCallbacks {
 
 void notifyBLEClient(const String &message) {
   if (!deviceConnected || !pTxCharacteristic) {
-    D_println("BLE: Cannot notify - device not connected");
     return;
   }
 
-  size_t len = message.length();
-  if (len > 185) { // MTU size set in initBLE
-    D_printf("BLE: Message exceeds MTU (%d > 185)\n", len);
-    return;
-  }
+  // BLE overhead is 3 bytes, so effective MTU is MTU-3
+  size_t maxLen = 185 - 3; // 182 bytes max payload
+  size_t msgLen = min(message.length(), maxLen);
 
   // Protect notification with mutex
   if (!bleMutex || xSemaphoreTake(bleMutex, pdMS_TO_TICKS(10)) != pdTRUE) {
@@ -155,12 +156,13 @@ void notifyBLEClient(const String &message) {
     return;
   }
 
-  pTxCharacteristic->setValue(message.c_str());
+  pTxCharacteristic->setValue((uint8_t *)message.c_str(), msgLen);
   pTxCharacteristic->notify();
   xSemaphoreGive(bleMutex);
 
-  D_print("BLE: Notification sent");
-  D_println(message);
+#ifdef DEBUG
+  D_printf("BLE TX: %s", message.c_str());
+#endif
 }
 
 // Static callback objects to prevent memory leaks
@@ -176,6 +178,7 @@ void initBLE(String sketchName, String firmWareVersion, String boardID) {
 
   BLEDevice::init(boardID);
   BLEDevice::setMTU(185);
+  BLEDevice::setPower(ESP_PWR_LVL_P9, ESP_BLE_PWR_TYPE_DEFAULT);
 
   pServer = BLEDevice::createServer();
   pServer->setCallbacks(&serverCallbacks); // Use static object, not new
