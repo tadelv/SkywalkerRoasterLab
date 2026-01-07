@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #define STATE_QUEUE_SIZE 5
+#define STATE_MUTEX_TIMEOUT_MS 50  // Increased from 10ms for better reliability under load
 
 extern void handleDRUM(uint8_t value);
 extern void handleCOOL(uint8_t value);
@@ -34,7 +35,7 @@ bool enqueueStateRequest(StateRequestT req, StateSourceT source) {
     // D_println("nothing to enqueue");
     return false;
   }
-  if (xSemaphoreTake(stateQueueMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+  if (xSemaphoreTake(stateQueueMutex, pdMS_TO_TICKS(STATE_MUTEX_TIMEOUT_MS)) == pdTRUE) {
     int lowestPriority = source;
     int lowestIndex = -1;
 
@@ -68,7 +69,7 @@ bool enqueueStateRequest(StateRequestT req, StateSourceT source) {
 }
 
 void processStateQueue() {
-  if (xSemaphoreTake(stateQueueMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+  if (xSemaphoreTake(stateQueueMutex, pdMS_TO_TICKS(STATE_MUTEX_TIMEOUT_MS)) == pdTRUE) {
     int highestPriority = -1;
     int highestIndex = -1;
 
@@ -118,7 +119,7 @@ void applyStateRequest(StateRequestT req, StateSourceT source) {
 
 StateRequestT getCurrentState() {
   StateRequestT state = {0};
-  if (xSemaphoreTake(stateQueueMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+  if (xSemaphoreTake(stateQueueMutex, pdMS_TO_TICKS(STATE_MUTEX_TIMEOUT_MS)) == pdTRUE) {
     state = targetState;
     xSemaphoreGive(stateQueueMutex);
   }

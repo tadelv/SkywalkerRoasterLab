@@ -9,7 +9,7 @@
 AsyncWebSocket ws("/ws");
 
 StateDataT state = {0};
-StateRequestT request = {255, 255, 255, 255};
+StateRequestT request = {255, 255, 255, 255, ""};
 
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
                AwsEventType type, void *arg, uint8_t *data, size_t len) {
@@ -34,16 +34,17 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
              (info->opcode == WS_TEXT) ? "text" : "binary", info->len);
     D_printf("final: %d\n", info->final);
 #endif
-    String msg = "";
     /*if (info->opcode != WS_TEXT || !info->final) {*/
     /*  break;*/
     /*}*/
 
-    for (size_t i = 0; i < info->len; i++) {
-      msg += (char)data[i];
-    }
+    // Use stack buffer instead of String to prevent heap fragmentation
+    char msgBuf[512];
+    size_t copyLen = (info->len < sizeof(msgBuf) - 1) ? info->len : sizeof(msgBuf) - 1;
+    memcpy(msgBuf, data, copyLen);
+    msgBuf[copyLen] = '\0';
 #ifdef DEBUG
-    D_printf("msg: %s\n", msg.c_str());
+    D_printf("msg: %s\n", msgBuf);
 #endif
 
     JsonDocument doc;
@@ -54,7 +55,11 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
     // Extract Values lt. https://arduinojson.org/v6/example/http-client/
     // Artisan Anleitung: https://artisan-scope.org/devices/websockets/
 
-    deserializeJson(doc, msg);
+    DeserializationError error = deserializeJson(doc, msgBuf);
+    if (error) {
+      D_printf("JSON parse error: %s\n", error.c_str());
+      return;
+    }
 
     long ln_id = doc["id"].as<long>();
     // Get BurnerVal from Artisan over Websocket
@@ -93,11 +98,18 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
       root["data"]["Cool"] = state.request.cooling;
     }
 
-    char buffer[200];                         // create temp buffer
-    size_t len = serializeJson(root, buffer); // serialize to buffer
-    // DEBUG WEBSOCKET
+    // Increase buffer size and add overflow check
+    char buffer[384];
+    size_t len = serializeJson(root, buffer, sizeof(buffer));
+    if (len >= sizeof(buffer)) {
+      D_println("ERROR: JSON response truncated");
+      return;
+    }
 
-    client->text(buffer);
+    // Validate client connection before sending
+    if (client && client->status() == WS_CONNECTED) {
+      client->text(buffer, len);
+    }
     // send message to client
     // webSocket.sendTXT(num, "message here");
 
@@ -106,7 +118,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
     enqueueStateRequest(request, SOURCE_WEBSOCKET);
   } break;
   default: // send message to client
-    D_printf("unhandled message type: %d\n", type);
+    // D_printf("unhandled message type: %d\n", type);
     // webSocket.sendBIN(num, payload, length);
     break;
   }
@@ -119,8 +131,8 @@ void setupMainLoop(AsyncWebServer *server) {
 
 StateRequestT socketTick(StateDataT data) {
   state = data;
-  ws.cleanupClients();
+  // Cleanup removed - already handled in webSerialLoop every 5 seconds
   StateRequestT response = request;
-  request = {255, 255, 255, 255};
+  request = {255, 255, 255, 255, ""};
   return response;
 }

@@ -34,35 +34,46 @@
 // -----------------------------------------------------------------------------
 BLEServer *pServer = nullptr;
 BLECharacteristic *pTxCharacteristic = nullptr;
-bool extern deviceConnected = false;
+bool deviceConnected = false;
 extern String firmWareVersion;
 extern String sketchName;
 
 StateRequestT _currentRequest = {255, 255, 255, 255};
 StateDataT _currentData = {0};
 
-StateRequestT bleTick(StateDataT data) {
-  _currentData = data;
+// Mutex for thread-safe BLE state access
+static SemaphoreHandle_t bleMutex = nullptr;
 
-  StateRequestT response = _currentRequest;
-  _currentRequest = {255, 255, 255, 255};
+StateRequestT bleTick(StateDataT data) {
+  StateRequestT response = {255, 255, 255, 255};
+
+  // Protect state access with mutex
+  if (bleMutex && xSemaphoreTake(bleMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    _currentData = data;
+    response = _currentRequest;
+    _currentRequest = {255, 255, 255, 255};
+    xSemaphoreGive(bleMutex);
+  }
+
   return response;
 }
 
 void notifyBLEClient(const String &message);
 
 // -----------------------------------------------------------------------------
-// BLE Server Callbacks
+// BLE Server Callbacks (static to prevent memory leaks)
 // -----------------------------------------------------------------------------
 class MyServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer *pServer, esp_ble_gatts_cb_param_t *param) override {
+  void onConnect(BLEServer *pServer, ble_gap_conn_desc *desc) override {
     deviceConnected = true;
 
     // Change BLE connection parameters per apple ble guidelines
     // (for this client, min interval 15ms (/1.25), max 30ms (/1.25), latency 4
     // frames, timeout 5sec(/10ms)
     // https://docs.silabs.com/bluetooth/4.0/bluetooth-miscellaneous-mobile/selecting-suitable-connection-parameters-for-apple-devices
-    pServer->updateConnParams(param->connect.remote_bda, 12, 24, 4, 500);
+    // pServer->updateConnParams(param->connect.remote_bda, 12, 24, 4, 500);
+    // For NimBLE:
+    // pServer->updateConnParams(desc->conn_handle, 12, 24, 4, 500);
 
     D_println("BLE: Client connected.");
   }
@@ -74,56 +85,103 @@ class MyServerCallbacks : public BLEServerCallbacks {
 };
 
 // -----------------------------------------------------------------------------
-// BLE Characteristic Callbacks
+// BLE Characteristic Callbacks (static to prevent memory leaks)
 // -----------------------------------------------------------------------------
 class MyCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *pCharacteristic) override {
-    String rxValue = String(pCharacteristic->getValue().c_str());
+    String rxValue = pCharacteristic->getValue();
+
+    // Validate buffer size to prevent overflow
+    if (rxValue.length() > 128) {
+      D_println("BLE: Command too long, ignoring");
+      return;
+    }
 
     if (rxValue.length() > 0) {
-      String input = String(rxValue.c_str());
+      String input = rxValue;
+
       D_print("BLE Write Received: ");
       D_println(input);
+
       CommandTypeT type = classifyCommandType(input);
       if (type == CMDType_READ) {
-        String readMsg = "0, " + String(_currentData.temp, 1) + "," +
-                         String(_currentData.temp, 1) + "," +
-                         String(_currentData.request.heater) + "," +
-                         String(_currentData.request.fan) + "\r\n";
-
-        notifyBLEClient(readMsg);
+        // Use snprintf instead of String concatenation to prevent heap
+        // fragmentation
+        char readMsg[64];
+        if (bleMutex && xSemaphoreTake(bleMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+          snprintf(readMsg, sizeof(readMsg), "0,%.1f,%.1f,%d,%d\r\n",
+                   _currentData.temp, _currentData.temp,
+                   _currentData.request.heater, _currentData.request.fan);
+          xSemaphoreGive(bleMutex);
+          notifyBLEClient(String(readMsg));
+        }
         return;
       }
       if (type == CMDType_CHAN) {
-        String message = "# Active channels set to 2100\r\n";
-        D_println(message);
-        notifyBLEClient(message);
+        // TC4 protocol: parse channel mask from CHAN;xxxx and echo it back
+        String channelMask = "2100"; // Default
+        int splitPos = input.indexOf(';');
+        if (splitPos >= 0 && splitPos < input.length() - 1) {
+          channelMask = input.substring(splitPos + 1);
+          channelMask.trim();
+        }
+        String response = "\r# Active channels set to " + channelMask + "\r\n";
+        notifyBLEClient(response); // Only send ONCE
+        return;
       }
-      _currentRequest = parseCommandToStateRequest(input);
-      enqueueStateRequest(_currentRequest, SOURCE_BLE);
+
+      // Parse and enqueue command
+      StateRequestT req = parseCommandToStateRequest(input);
+      if (bleMutex && xSemaphoreTake(bleMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+        _currentRequest = req;
+        xSemaphoreGive(bleMutex);
+      }
+      enqueueStateRequest(req, SOURCE_BLE);
     }
   }
 };
 
 void notifyBLEClient(const String &message) {
-  D_println("Attempting to notify BLE client with: " + message);
-
-  if (deviceConnected && pTxCharacteristic) {
-    pTxCharacteristic->setValue(message.c_str());
-    pTxCharacteristic->notify();
-    D_println("Notification sent successfully.");
-  } else {
-    D_println("Notification failed. Device not connected or TX characteristic "
-              "unavailable.");
+  if (!deviceConnected || !pTxCharacteristic) {
+    return;
   }
+
+  // BLE overhead is 3 bytes, so effective MTU is MTU-3
+  size_t maxLen = 185 - 3; // 182 bytes max payload
+  size_t msgLen = min(message.length(), maxLen);
+
+  // Protect notification with mutex
+  if (!bleMutex || xSemaphoreTake(bleMutex, pdMS_TO_TICKS(10)) != pdTRUE) {
+    D_println("BLE: Failed to acquire mutex for notify");
+    return;
+  }
+
+  pTxCharacteristic->setValue((uint8_t *)message.c_str(), msgLen);
+  pTxCharacteristic->notify();
+  xSemaphoreGive(bleMutex);
+
+#ifdef DEBUG
+  D_printf("BLE TX: %s", message.c_str());
+#endif
 }
 
+// Static callback objects to prevent memory leaks
+static MyServerCallbacks serverCallbacks;
+static MyCallbacks rxCallbacks;
+
 void initBLE(String sketchName, String firmWareVersion, String boardID) {
+  // Create mutex for thread-safe state access
+  bleMutex = xSemaphoreCreateMutex();
+  if (!bleMutex) {
+    D_println("BLE: Failed to create mutex!");
+  }
+
   BLEDevice::init(boardID);
   BLEDevice::setMTU(185);
+  BLEDevice::setPower(ESP_PWR_LVL_P9, ESP_BLE_PWR_TYPE_DEFAULT);
 
   pServer = BLEDevice::createServer();
-  pServer->setCallbacks(new MyServerCallbacks());
+  pServer->setCallbacks(&serverCallbacks); // Use static object, not new
 
   BLEService *pService = pServer->createService(SERVICE_UUID);
 
@@ -131,14 +189,14 @@ void initBLE(String sketchName, String firmWareVersion, String boardID) {
   pTxCharacteristic = pService->createCharacteristic(
       CHARACTERISTIC_UUID_TX,
       BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_READ);
-  pTxCharacteristic->addDescriptor(new BLE2902());
+  // pTxCharacteristic->addDescriptor(new BLE2902());
 
   // Hibean commands to Roaster
   BLECharacteristic *pRxCharacteristic = pService->createCharacteristic(
       CHARACTERISTIC_UUID_RX,
       BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
-  pRxCharacteristic->setCallbacks(new MyCallbacks());
-  pRxCharacteristic->addDescriptor(new BLE2902());
+  pRxCharacteristic->setCallbacks(&rxCallbacks); // Use static object, not new
+  // pRxCharacteristic->addDescriptor(new BLE2902());
   pService->start();
 
   // esp32 information to HiBean for support/debug purposes
@@ -146,17 +204,17 @@ void initBLE(String sketchName, String firmWareVersion, String boardID) {
   BLECharacteristic *boardCharacteristic = devInfoService->createCharacteristic(
       "2A29", BLECharacteristic::PROPERTY_READ);
   boardCharacteristic->setValue(boardID);
-  boardCharacteristic->addDescriptor(new BLE2902());
+  // boardCharacteristic->addDescriptor(new BLE2902());
   BLECharacteristic *sketchNameCharacteristic =
       devInfoService->createCharacteristic("2A28",
                                            BLECharacteristic::PROPERTY_READ);
   sketchNameCharacteristic->setValue(sketchName);
-  sketchNameCharacteristic->addDescriptor(new BLE2902());
+  // sketchNameCharacteristic->addDescriptor(new BLE2902());
   BLECharacteristic *firmwareCharacteristic =
       devInfoService->createCharacteristic("2A26",
                                            BLECharacteristic::PROPERTY_READ);
   firmwareCharacteristic->setValue(sketchName + ", " + firmWareVersion);
-  firmwareCharacteristic->addDescriptor(new BLE2902());
+  // firmwareCharacteristic->addDescriptor(new BLE2902());
 
   devInfoService->start();
 
